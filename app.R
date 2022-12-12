@@ -1,14 +1,16 @@
 library(shiny)
-library(shinythemes)
 library(shinydashboard)
-library(leaflet)
-library(leaflet.extras)
-library(sf)
-library(shinyjs)
 library(dplyr)
 library(plotly)
+library(shinythemes)
+library(ggplot2)
 library(DT)
-library(rgdal)
+library(stringr)
+library(tools)
+library(maps) 
+library(maptools)
+library(rgeos)
+library(leaflet)
 
 
 # data source
@@ -19,10 +21,9 @@ library(rgdal)
 
 # Load and merge data ----------------------------------------------
 hospital <- read.csv('hospitals.csv')
-age <- read.csv('md_age_death.csv')
 primary <- read.csv('primary_care.csv')
-muShape <- readOGR("./deathage/MuniMedianDeathAge2011_15.shp",
-                   layer = "MuniMedianDeathAge2011_15")
+muShape<- readShapePoly("./deathage/MuniMedianDeathAge2011_15")
+muShape@data <- cbind(muShape@data, rgeos::gCentroid(muShape, byid = TRUE)@coords)
 facility <- rbind(hospital, primary)
 
 # Avoid plotly issues ----------------------------------------------
@@ -45,10 +46,10 @@ sidebar <- dashboardSidebar(
     # Municipality Selection ----------------------------------------------
     selectInput("muSelect",
                 "Municipality:",
-                choices = sort(unique(age$municipality)),
+                choices = sort(unique(muShape$LABEL)),
                 multiple = TRUE,
                 selectize = TRUE,
-                selected = c("PIISBURGH", "PENN HILLS TOWNSHIP")),
+                selected = c("Pittsburgh", "Penn Hills Township")),
     
     # Facility Type Selection ----------------------------------------------
     selectInput("ftSelect",
@@ -106,23 +107,30 @@ server <- function(input, output) {
            race %in% input$rcSelect)
   })
   
-  # build a leaflet map ----------------------------------------
-  output$leaflet <- renderLeaflet({
-    
-    map <- leaflet(data = muShape) %>%
+  #base leaflet map, centered on pa's centroid 
+  output$Map <- renderLeaflet({
+    leaflet() %>%
+      addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", attribution = "Google", group = "Google") %>%
+      addProviderTiles(provider = providers$Wikimedia, group = "Wiki") %>%        
       setView(-80, 40.5, 10) %>%
-      addTiles() #%>%
-    map
+      addLayersControl(baseGroups = c("Google", "Wiki"))
   })
   
+  #subsetting shapefile to plot 
+  musubset <- reactive({
+    musubset <- subset(muShape, muShape$LABEL == input$muSelect)
+    musubset
+  })
   
-  # update the map when municipality is selected ---------------------------
-  
+  #observe function for changes in user input and add polygon
   observe({
-    map0 <- leafletProxy("leaflet", data = muShape) 
+    musub <- musubset()
     
-})
-
+    leafletProxy("Map", data = musub) %>%
+      clearGroup(group = "musub") %>%
+      addPolygons(popup = ~paste0("<b>", LABEL, "</b>"), group = "musub", layerId = ~OBJECTID, fill = TRUE, color = "red") %>%
+      setView(lng = musub$x[1], lat = musub$y[1], zoom = 6)
+  })
 }
 
 # Run the application ----------------------------------------------
