@@ -1,16 +1,21 @@
 library(shiny)
 library(shinydashboard)
+library(reshape2)
 library(dplyr)
-library(plotly)
 library(shinythemes)
 library(ggplot2)
 library(DT)
 library(stringr)
 library(tools)
-library(maps) 
-library(maptools)
-library(rgeos)
+library(shinyWidgets)
+library(tidyverse)
+library(rsconnect)
+library(rgdal)
 library(leaflet)
+library(leaflet.extras)
+library(sp)
+library(rgeos)
+library(RColorBrewer)
 
 
 # data source
@@ -49,7 +54,7 @@ sidebar <- dashboardSidebar(
                 choices = sort(unique(muShape$LABEL)),
                 multiple = TRUE,
                 selectize = TRUE,
-                selected = c("Pittsburgh", "Penn Hills Township")),
+                selected = c("Sewickley Borough", "Penn Hills Township")),
     
     # Facility Type Selection ----------------------------------------------
     selectInput("ftSelect",
@@ -57,15 +62,7 @@ sidebar <- dashboardSidebar(
                 choices = c("Hospital", "Primary Care Facility"),
                 multiple = TRUE,
                 selectize = TRUE,
-                selected = c("Hospital")),
-    
-    # Race Selection --------------------------------------------
-    selectInput("rcSelect",
-                "Race:",
-                choices = c("Black", "White"),
-                multiple = TRUE,
-                selectize = TRUE,
-                selected = c("White"))
+                selected = c("Hospital"))
   )
 )
 
@@ -102,34 +99,73 @@ server <- function(input, output) {
   SelectedMuInput <- reactive({
     req(input$muSelect)
     req(input$ftSelect)
-    req(input$rcSelect)
-    filter(municipality %in% input$muSelect & facility %in% input$ftSelect & 
-           race %in% input$rcSelect)
+    filter(muShape@data, LABEL %in% input$muSelect)
+  })
+
+  SelectedFalInput <- reactive({
+    req(input$muSelect)
+    req(input$ftSelect)  
+    filter(facility, Facility %in% input$ftSelect)
   })
   
-  #base leaflet map, centered on pa's centroid 
+  # set color -------------------------------------------
+  pal_age <- colorNumeric(
+    palette = "Oranges",
+    domain = muShape$TOTAL_MD_A)
+  
+  pal_fal <- colorFactor(c("#DECBE4", "#D01C8B"), c("Hospital", "Primary Care"))
+  
+  # base leaflet map -------------------------------------------
   output$Map <- renderLeaflet({
-    leaflet() %>%
-      addTiles(urlTemplate = "http://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", attribution = "Google", group = "Google") %>%
-      addProviderTiles(provider = providers$Wikimedia, group = "Wiki") %>%        
-      setView(-80, 40.5, 10) %>%
-      addLayersControl(baseGroups = c("Google", "Wiki"))
+    leaflet(muShape) %>%
+      addTiles() %>%
+      setView(-80, 40.5, 10)
   })
   
-  #subsetting shapefile to plot 
-  musubset <- reactive({
-    musubset <- subset(muShape, muShape$LABEL == input$muSelect)
-    musubset
-  })
-  
-  #observe function for changes in user input and add polygon
+  # add polygons to the map ---------------------------------------------------
   observe({
-    musub <- musubset()
-    
-    leafletProxy("Map", data = musub) %>%
-      clearGroup(group = "musub") %>%
-      addPolygons(popup = ~paste0("<b>", LABEL, "</b>"), group = "musub", layerId = ~OBJECTID, fill = TRUE, color = "red") %>%
-      setView(lng = musub$x[1], lat = musub$y[1], zoom = 6)
+    leafletProxy("Map", data = muShape) %>%
+      clearMarkers() %>%
+      addPolygons(popup = ~paste0("<b>", LABEL, "</b>"), fillOpacity = 0.8, 
+                  weight = 0.5, color = ~pal_age(TOTAL_MD_A)) %>%
+      addLegend(position = "topright", 
+                pal = pal_age, 
+                values = muShape$TOTAL_MD_A, 
+                title = "Municipality")
+  })
+  
+  # add points to the map ---------------------------------------------------
+  observe({
+    leafletProxy("Map", data = facility) %>%
+      clearMarkers() %>%
+      addCircleMarkers(lng = ~Longitude, lat = ~Latitude, 
+                       radius = 0.2, 
+                       color = ~pal_fal(Type), 
+                       popup = ~paste0("<b>", Facility, "</b> (", Type, ")</b>"), 
+                       clusterOptions = markerClusterOptions(),
+                       fillOpacity = 1) %>%
+      addLegend(position = "topright", 
+                pal = pal_fal, 
+                values = facility$Type, 
+                title = "Median Age at Death")
+  }) 
+  
+  # Plot comparing facility number -----------------------------
+  output$plot_facility <- renderPlotly({
+    dat <- SelectedFalInput()
+    ggplot(data = dat, aes(x = LABEL, y = factor(Facility), fill = LABEL)) + 
+      geom_bar(stat = "identity")+
+      xlab("Municipality")+
+      ylab("Number of Facilities")
+  })
+  
+  # Plot comparing median death age -----------------------------
+  output$plot_age <- renderPlotly({
+    dat <- SelectedMuInput()
+      ggplot(data = dat, aes(x = LABEL, y = TOTAL_MD_A, fill = LABEL)) + 
+      geom_bar(stat = "identity")+
+      xlab("Municipality")+
+      ylab("Median Death Age")
   })
 }
 
