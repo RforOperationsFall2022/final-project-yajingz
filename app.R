@@ -37,7 +37,7 @@ facility <- rbind(hospital, primary)
 pdf(NULL)
 
 # Application header & title ----------------------------------------------
-header <- dashboardHeader(title = "Allegheny County Healthcare Access")
+header <- dashboardHeader(title = "Allegheny County Death and Healthcare Data")
 
 # Dashboard Sidebar ----------------------------------------------
 sidebar <- dashboardSidebar(
